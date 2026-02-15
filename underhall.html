@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Underhåll – hel/halv dag</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; }
+    body { margin:0; background:#f6f7f9; color:#111; }
+    header { padding:16px; background:#fff; border-bottom:1px solid #e6e8ee; position:sticky; top:0; z-index:2; }
+    h1 { margin:0; font-size:18px; }
+    .wrap { max-width: 920px; margin: 0 auto; padding: 16px; }
+    .card { background:#fff; border:1px solid #e6e8ee; border-radius:12px; padding:14px; box-shadow:0 1px 0 rgba(0,0,0,.02); }
+    .row { display:flex; gap:12px; flex-wrap: wrap; align-items: end; }
+    label { font-size:12px; color:#444; display:block; margin-bottom:6px; }
+    input[type="month"], input[type="number"] { padding:10px 12px; border:1px solid #d8dbe6; border-radius:10px; font-size:14px; background:#fff; }
+    input[type="number"]{ width: 120px; }
+    button { padding:10px 12px; border-radius:10px; border:1px solid #d8dbe6; background:#fff; cursor:pointer; }
+    button.primary { background:#111; color:#fff; border-color:#111; }
+    button:active { transform: translateY(1px); }
+    .stats { display:grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
+    .stat { border:1px solid #e6e8ee; border-radius:12px; padding:10px; background:#fbfbfd; }
+    .stat .k { font-size:12px; color:#555; }
+    .stat .v { font-size:18px; font-weight:700; margin-top:2px; }
+    table { width:100%; border-collapse: collapse; margin-top: 14px; }
+    th, td { padding:10px; border-bottom:1px solid #eef0f6; text-align:left; vertical-align: middle; }
+    th { font-size: 12px; color:#555; }
+    tr:hover td { background:#fafbff; }
+    .day { white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .right { text-align:right; }
+    .muted { color:#666; font-size:12px; }
+    .seg { display:inline-flex; border:1px solid #d8dbe6; border-radius:999px; overflow:hidden; }
+    .seg button { border:0; border-right:1px solid #d8dbe6; border-radius:0; padding:8px 10px; font-size:13px; }
+    .seg button:last-child { border-right:0; }
+    .seg button.active { background:#111; color:#fff; }
+    .footer-actions { display:flex; gap:10px; flex-wrap: wrap; margin-top: 10px; }
+    .danger { color:#b00020; border-color:#f2c1c8; }
+    .note { margin-top:10px; font-size:12px; color:#555; }
+
+    /* Visas bara i PDF/print */
+    .print-only { display:none; }
+
+    @media (max-width: 700px){
+      .stats { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 420px){
+      .stats { grid-template-columns: 1fr; }
+    }
+
+    /* PDF/print layout */
+    @media print {
+      header { position: static; }
+      body { background:#fff; }
+      .wrap { max-width: none; padding: 0; }
+      .card { border:0; box-shadow:none; padding:0; }
+      tr:hover td { background: transparent; }
+      th, td { padding:6px; }
+
+      /* Göm kontroller */
+      .footer-actions, input, button, select, label { display:none !important; }
+
+      /* Visa PDF-rubrik och status-text */
+      .print-only { display:block; }
+      .seg { display:none !important; } /* hide klick-knappar */
+    }
+  </style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <h1>Underhåll – klicka hel/halv dag</h1>
+    <div class="muted">Dagsbelopp = maxbelopp / antal dagar i månaden.</div>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="card">
+
+    <!-- Visas bara vid PDF/print -->
+    <div class="print-only" id="printHeader" style="margin-bottom:10px;">
+      <div style="font-size:18px; font-weight:700;">Underhåll – månadsrapport</div>
+      <div class="muted" id="printMeta"></div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label for="month">Månad</label>
+        <input id="month" type="month" />
+      </div>
+      <div>
+        <label for="cap">Max belopp per månad (kr)</label>
+        <input id="cap" type="number" inputmode="numeric" step="1" min="0" value="5000" />
+      </div>
+      <div style="flex:1"></div>
+      <div class="footer-actions">
+        <button id="pdfBtn" class="primary">Spara som PDF</button>
+        <button id="exportBtn">Exportera</button>
+        <button id="importBtn">Importera</button>
+        <button id="clearBtn" class="danger">Nollställ månaden</button>
+      </div>
+    </div>
+
+    <div class="stats">
+      <div class="stat">
+        <div class="k">Dagsbelopp</div>
+        <div class="v" id="dayRate">0 kr</div>
+      </div>
+      <div class="stat">
+        <div class="k">Hel-dagar (summa)</div>
+        <div class="v" id="fullDays">0</div>
+      </div>
+      <div class="stat">
+        <div class="k">Halv-dagar (summa)</div>
+        <div class="v" id="halfDays">0</div>
+      </div>
+      <div class="stat">
+        <div class="k">Totalt att betala</div>
+        <div class="v" id="total">0 kr</div>
+      </div>
+    </div>
+
+    <div class="note" id="note"></div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Datum</th>
+          <th>Veckodag</th>
+          <th>Status</th>
+          <th class="right">Belopp</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+(() => {
+  const monthEl = document.getElementById('month');
+  const capEl = document.getElementById('cap');
+  const tbody = document.getElementById('tbody');
+
+  const dayRateEl = document.getElementById('dayRate');
+  const fullDaysEl = document.getElementById('fullDays');
+  const halfDaysEl = document.getElementById('halfDays');
+  const totalEl = document.getElementById('total');
+  const noteEl = document.getElementById('note');
+
+  const printMetaEl = document.getElementById('printMeta');
+
+  const pdfBtn = document.getElementById('pdfBtn');
+  const exportBtn = document.getElementById('exportBtn');
+  const importBtn = document.getElementById('importBtn');
+  const clearBtn = document.getElementById('clearBtn');
+
+  const pad2 = n => String(n).padStart(2, '0');
+  const today = new Date();
+  monthEl.value = `${today.getFullYear()}-${pad2(today.getMonth()+1)}`;
+
+  // status: 0=ingen, 0.5=halv, 1=hel
+  function keyForMonth(ym){ return `underhall:status:${ym}`; }
+  function cfgKey(){ return `underhall:config`; }
+
+  function getMonthDays(ym){
+    const [y, m] = ym.split('-').map(Number);
+    const end = new Date(y, m, 0);
+    const days = [];
+    for (let d=1; d<=end.getDate(); d++) days.push(new Date(y, m-1, d));
+    return days;
+  }
+
+  function dateStr(date){
+    return `${date.getFullYear()}-${pad2(date.getMonth()+1)}-${pad2(date.getDate())}`;
+  }
+  function weekdayName(date){
+    return date.toLocaleDateString('sv-SE', { weekday:'long' });
+  }
+
+  function fmtKr(n){
+    const v = Number.isFinite(n) ? n : 0;
+    return new Intl.NumberFormat('sv-SE', { style:'currency', currency:'SEK', maximumFractionDigits: 2 }).format(v);
+  }
+
+  function statusLabel(st){
+    if (st === 1) return "Hel";
+    if (st === 0.5) return "Halv";
+    return "Ingen";
+  }
+
+  function loadStatuses(ym){
+    const raw = localStorage.getItem(keyForMonth(ym));
+    if (!raw) return {};
+    try { return JSON.parse(raw) || {}; } catch { return {}; }
+  }
+  function saveStatuses(ym, obj){
+    localStorage.setItem(keyForMonth(ym), JSON.stringify(obj));
+  }
+
+  function loadConfig(){
+    const raw = localStorage.getItem(cfgKey());
+    if (!raw) return null;
+    try { return JSON.parse(raw); } catch { return null; }
+  }
+  function saveConfig(cfg){
+    localStorage.setItem(cfgKey(), JSON.stringify(cfg));
+  }
+
+  // restore cap if saved
+  const cfg = loadConfig();
+  if (cfg?.cap != null && Number.isFinite(Number(cfg.cap))) capEl.value = String(cfg.cap);
+
+  function calcDayRate(ym){
+    const days = getMonthDays(ym).length;
+    const cap = Math.max(0, Number(capEl.value || 0));
+    return days ? (cap / days) : 0;
+  }
+
+  // --- PDF: visa bara markerade dagar ---
+  function rowStatusValue(tr){
+    const v = Number(tr.dataset.status || 0);
+    return Number.isFinite(v) ? v : 0;
+  }
+
+  function filterRowsForPrint(onlyMarked){
+    const rows = tbody.querySelectorAll('tr');
+    rows.forEach(tr => {
+      const st = rowStatusValue(tr);
+      const shouldHide = onlyMarked ? (st === 0) : false;
+      tr.style.display = shouldHide ? 'none' : '';
+    });
+  }
+
+  function render(){
+    const ym = monthEl.value;
+    const statuses = loadStatuses(ym);
+    const days = getMonthDays(ym);
+    const dayRate = calcDayRate(ym);
+
+    dayRateEl.textContent = fmtKr(dayRate);
+    noteEl.textContent = `Månaden har ${days.length} dagar. Max ${fmtKr(Number(capEl.value||0))} ⇒ dagsbelopp ${fmtKr(dayRate)}.`;
+
+    tbody.innerHTML = "";
+
+    for (const dt of days){
+      const ds = dateStr(dt);
+      const st = Number(statuses[ds] ?? 0); // 0, 0.5, 1
+
+      const tr = document.createElement('tr');
+      tr.dataset.status = String(st); // används för PDF-filter
+
+      const tdDate = document.createElement('td');
+      tdDate.className = "day";
+      tdDate.textContent = ds;
+
+      const tdWk = document.createElement('td');
+      tdWk.textContent = weekdayName(dt);
+
+      const tdStatus = document.createElement('td');
+
+      // Interaktivt segment (syns på skärm)
+      const seg = document.createElement('div');
+      seg.className = "seg";
+
+      const btn0 = document.createElement('button');
+      btn0.textContent = "0";
+      const btnH = document.createElement('button');
+      btnH.textContent = "½";
+      const btn1 = document.createElement('button');
+      btn1.textContent = "1";
+
+      // Status-text (syns i PDF/print)
+      const statusText = document.createElement('span');
+      statusText.className = "print-only";
+      statusText.textContent = statusLabel(st);
+
+      const tdAmt = document.createElement('td');
+      tdAmt.className = "right";
+      tdAmt.textContent = fmtKr(st * dayRate);
+
+      function setStatus(v){
+        const next = loadStatuses(ym);
+        if (v === 0) delete next[ds];
+        else next[ds] = v;
+        saveStatuses(ym, next);
+
+        tr.dataset.status = String(v); // viktigt för PDF-filter
+
+        tdAmt.textContent = fmtKr(v * dayRate);
+        statusText.textContent = statusLabel(v);
+
+        btn0.classList.toggle('active', v === 0);
+        btnH.classList.toggle('active', v === 0.5);
+        btn1.classList.toggle('active', v === 1);
+
+        renderStats();
+      }
+
+      btn0.addEventListener('click', () => setStatus(0));
+      btnH.addEventListener('click', () => setStatus(0.5));
+      btn1.addEventListener('click', () => setStatus(1));
+
+      seg.appendChild(btn0);
+      seg.appendChild(btnH);
+      seg.appendChild(btn1);
+
+      tdStatus.appendChild(seg);
+      tdStatus.appendChild(statusText);
+
+      btn0.classList.toggle('active', st === 0);
+      btnH.classList.toggle('active', st === 0.5);
+      btn1.classList.toggle('active', st === 1);
+
+      tr.appendChild(tdDate);
+      tr.appendChild(tdWk);
+      tr.appendChild(tdStatus);
+      tr.appendChild(tdAmt);
+
+      tbody.appendChild(tr);
+    }
+
+    renderStats();
+  }
+
+  function renderStats(){
+    const ym = monthEl.value;
+    const statuses = loadStatuses(ym);
+    const dayRate = calcDayRate(ym);
+    const daysCount = getMonthDays(ym).length;
+    const cap = Math.max(0, Number(capEl.value || 0));
+
+    let full = 0;
+    let half = 0;
+    let total = 0;
+
+    for (const k of Object.keys(statuses)){
+      const st = Number(statuses[k]);
+      if (st === 1) full += 1;
+      else if (st === 0.5) half += 1;
+      if (st === 1 || st === 0.5) total += st * dayRate;
+    }
+
+    fullDaysEl.textContent = String(full);
+    halfDaysEl.textContent = String(half);
+    totalEl.textContent = fmtKr(total);
+
+    const meta = [
+      `Månad: ${ym}`,
+      `Dagar: ${daysCount}`,
+      `Max: ${fmtKr(cap)}`,
+      `Dagsbelopp: ${fmtKr(dayRate)}`,
+      `Totalt: ${fmtKr(total)}`
+    ].join(" • ");
+
+    printMetaEl.textContent = meta;
+  }
+
+  monthEl.addEventListener('change', render);
+  capEl.addEventListener('input', () => {
+    saveConfig({ cap: Number(capEl.value || 0) });
+    render();
+  });
+
+  // Filtrera automatiskt om någon triggar print utan knappen
+  window.addEventListener('beforeprint', () => filterRowsForPrint(true));
+  window.addEventListener('afterprint', () => filterRowsForPrint(false));
+
+  pdfBtn.addEventListener('click', () => {
+    // 1) visa bara markerade rader
+    filterRowsForPrint(true);
+
+    // 2) öppna print-dialog (välj "Spara som PDF")
+    window.print();
+
+    // 3) fallback: återställ efter kort stund
+    setTimeout(() => filterRowsForPrint(false), 300);
+  });
+
+  exportBtn.addEventListener('click', () => {
+    const ym = monthEl.value;
+    const payload = {
+      month: ym,
+      cap: Number(capEl.value || 0),
+      statuses: loadStatuses(ym),
+      exportedAt: new Date().toISOString()
+    };
+    const text = JSON.stringify(payload, null, 2);
+    navigator.clipboard?.writeText(text).catch(()=>{});
+    alert("Export klar! JSON kopierat till urklipp (om tillåtet) och visas i nästa ruta.");
+    prompt("Kopiera JSON:", text);
+  });
+
+  importBtn.addEventListener('click', () => {
+    const txt = prompt("Klistra in JSON att importera:");
+    if (!txt) return;
+    try{
+      const obj = JSON.parse(txt);
+      if (!obj?.month || typeof obj.statuses !== "object") throw new Error("Fel format");
+      monthEl.value = obj.month;
+      if (obj.cap != null) capEl.value = String(obj.cap);
+      saveConfig({ cap: Number(capEl.value || 0) });
+      saveStatuses(obj.month, obj.statuses || {});
+      render();
+      alert("Import klar!");
+    } catch(e){
+      alert("Kunde inte importera. Kontrollera att JSON är korrekt.");
+    }
+  });
+
+  clearBtn.addEventListener('click', () => {
+    const ym = monthEl.value;
+    if (!confirm(`Nollställ alla markeringar för ${ym}?`)) return;
+    localStorage.removeItem(keyForMonth(ym));
+    render();
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>
